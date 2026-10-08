@@ -1,0 +1,19 @@
+name = "vless-worker-manager"
+main = "src/index.ts"
+compatibility_date = "2026-10-09"
+
+[[kv_namespaces]]
+binding = "DATA"
+id = "REPLACE_WITH_KV_ID"
+
+[durable_objects]
+bindings = [
+  { name = "AGENTS", class_name = "AgentManager" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AgentManager"]
+
+[vars]
+PANEL_NAME = "VLESS Manager"
