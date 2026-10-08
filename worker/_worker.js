@@ -1,69 +1,127 @@
-const PAGE=`<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>VLESS Manager</title><style>body{font:15px system-ui;background:#0b1020;color:#eee;max-width:1100px;margin:auto;padding:24px}button,input{padding:10px;margin:4px;border-radius:8px;border:1px solid #345;background:#121a2d;color:#fff}button{cursor:pointer}.card{display:inline-block;vertical-align:top;width:300px;margin:8px;padding:18px;background:#121a2d;border:1px solid #263552;border-radius:14px}.on{color:#70e0a0}.code{word-break:break-all;background:#080d18;padding:10px;border-radius:8px}.modal{position:fixed;inset:0;background:#000b;display:flex;align-items:center;justify-content:center}.box{background:#121a2d;padding:24px;border-radius:14px;max-width:700px;width:90%}</style><div id=a></div><script>
-let T=localStorage.vless_token||'';const A=document.querySelector('#a');
-async function api(u,o={}){o.headers={'content-type':'application/json',...(T?{Authorization:'Bearer '+T}:{})};let r=await fetch(u,o);if(!r.ok)throw Error(await r.text());return r.json()}
-function esc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function login(){A.innerHTML='<div class=box><h2>VLESS Manager</h2><input id=p type=password placeholder=管理员密码><button onclick="go()">登录</button></div>'}window.go=async()=>{try{let r=await api('/api/login',{method:'POST',body:JSON.stringify({password:p.value})});T=r.token;localStorage.vless_token=T;load()}catch(e){alert('密码错误')}};
-async function load(){try{let s=await api('/api/servers');A.innerHTML='<h2>VLESS Manager <button onclick="add()">+ 添加服务器</button></h2>'+s.map(x=>\`<div class=card><b>\${esc(x.name)}</b> <span class=\${x.status==='online'?'on':''}>● \${esc(x.status||'pending')}</span><p>\${esc(x.host||'等待 Agent')}:\${x.port}</p><p>SNI: \${esc(x.sni)}</p><button onclick="detail('\${x.id}')">节点详情</button><button onclick="restart('\${x.id}')">重启 Xray</button></div>\`).join('')}catch(e){T='';localStorage.removeItem('vless_token');login()}}
-window.add=()=>A.insertAdjacentHTML('beforeend','<div class=modal><div class=box><h3>添加服务器</h3><input id=n placeholder=服务器名称><input id=po value=443><input id=s value=www.microsoft.com><button onclick="create()">生成安装命令</button><button onclick="load()">取消</button></div></div>');
-window.create=async()=>{try{let r=await api('/api/servers',{method:'POST',body:JSON.stringify({name:n.value,port:+po.value,sni:s.value})});A.insertAdjacentHTML('beforeend',\`<div class=modal><div class=box><h3>一键安装</h3><div class=code>\${esc(r.command)}</div><button onclick="navigator.clipboard.writeText(\${JSON.stringify(r.command)})">复制</button><button onclick="load()">关闭</button></div></div>\`)}catch(e){alert(e)}};
-window.detail=async id=>{let r=await api('/api/servers/'+id),s=r.server,v=s.uuid?\`vless://\${s.uuid}@\${s.host}:\${s.port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=\${encodeURIComponent(s.sni)}&fp=chrome&pbk=\${encodeURIComponent(s.publicKey)}&sid=\${s.shortId}&type=tcp#\${encodeURIComponent(s.name)}\`:'Agent 尚未注册';A.insertAdjacentHTML('beforeend',\`<div class=modal><div class=box><h3>\${esc(s.name)}</h3><div class=code>\${esc(v)}</div><button onclick='navigator.clipboard.writeText(\${JSON.stringify(v)})'>复制链接</button><button onclick="load()">关闭</button></div></div>\`) };window.restart=async id=>{await api('/api/servers/'+id+'/command',{method:'POST',body:JSON.stringify({action:'restart_xray'})});alert('已加入命令队列')};load();</script>`;
-const j=(x,s=200)=>new Response(JSON.stringify(x),{status:s,headers:{'content-type':'application/json;charset=utf-8'}});
-async function hash(x){let b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(x));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
-const sk=id=>`server:${id}`,ik=t=>`install:${t}`,qk=id=>`queue:${id}`;
-function ok(r,e){return (r.headers.get('Authorization')||'').replace(/^Bearer\s+/i,'')===e.ADMIN_PASSWORD}
-function link(s){return `vless://${s.uuid}@${s.host}:${s.port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(s.sni)}&fp=chrome&pbk=${encodeURIComponent(s.publicKey)}&sid=${s.shortId}&type=tcp#${encodeURIComponent(s.name)}`}
-function installScript(origin,t){return `#!/bin/bash
-set -e
-W='${origin}'; T='${t}'
-command -v curl >/dev/null || { apt-get update -y; apt-get install -y curl openssl; }
-mkdir -p /etc/vless-agent
-curl -fsSL "$W/agent.sh?token=$T" -o /etc/vless-agent/agent.sh
-chmod +x /etc/vless-agent/agent.sh
-cat >/etc/vless-agent/config <<EOF
-WORKER=$W
-TOKEN=$T
-EOF
-cat >/etc/systemd/system/vless-agent.service <<EOF
+const json=(d,s=200)=>new Response(JSON.stringify(d),{status:s,headers:{'content-type':'application/json;charset=utf-8'}});
+const html=(s,st=200)=>new Response(s,{status:st,headers:{'content-type':'text/html;charset=utf-8'}});
+const rand=(n=32)=>{const a=new Uint8Array(n);crypto.getRandomValues(a);return [...a].map(x=>x.toString(16).padStart(2,'0')).join('')};
+const gid=p=>`${p}_${rand(8)}`;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const get=k=>DATA.get(k,'json');
+const put=(k,v)=>DATA.put(k,JSON.stringify(v));
+const auth=r=>(r.headers.get('authorization')||'').replace(/^Bearer\s+/i,'').trim();
+
+async function installInfo(token){const m=await get(`install:${token}`);return m?await get(`server:${m.serverId}`):null}
+async function agentServer(req){const t=auth(req);if(!t)return null;const m=await get(`agent:${t}`);if(!m)return null;const s=await get(`server:${m.serverId}`);return s?{s,t}:null}
+
+async function home(req){
+ const u=new URL(req.url), admin=env.ADMIN_KEY||'', key=u.searchParams.get('key')||'';
+ if(admin&&key!==admin)return html('<h3>Admin key required</h3>',403);
+ const list=await DATA.list({prefix:'server:'}), ss=[]; for(const k of list.keys){const s=await get(k.name);if(s)ss.push(s)} ss.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+ const rows=ss.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.host||'-')}</td><td>${s.port||'-'}</td><td>${esc(s.sni)}</td><td>${esc(s.status)}</td><td>${s.vless?`<textarea readonly>${esc(s.vless)}</textarea>`:'-'}</td></tr>`).join('');
+ const cmds=ss.map(s=>`<div class="box"><b>${esc(s.name)}</b><pre>curl -fsSL "${u.origin}/api/install-script/${s.installToken}" | bash</pre></div>`).join('');
+ return html(`<!doctype html><meta charset=utf-8><title>VLESS Node Manager</title><style>body{font-family:system-ui;max-width:1200px;margin:30px auto;padding:0 15px}input,button{padding:8px;margin:3px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:7px;vertical-align:top}textarea{width:520px;height:55px}.box{border:1px solid #ddd;padding:10px;margin:10px 0}pre{white-space:pre-wrap;word-break:break-all;background:#f5f5f5;padding:10px}</style><h1>VLESS Node Manager</h1><form method=post action="/api/server/create${admin?'?key='+encodeURIComponent(key):''}"><input name=name placeholder="节点名称" required><input name=port placeholder="端口，默认26443"><input name=sni placeholder="SNI，默认www.microsoft.com"><button>添加节点</button></form><h2>节点</h2><table><tr><th>名称</th><th>Host</th><th>Port</th><th>SNI</th><th>Status</th><th>VLESS</th></tr>${rows}</table><h2>安装命令</h2>${cmds||'暂无节点'}`)
+}
+async function create(req){const u=new URL(req.url),f=await req.formData(),s={id:gid('srv'),name:String(f.get('name')||'node'),host:'',port:Number(f.get('port')||26443),sni:String(f.get('sni')||'www.microsoft.com'),status:'pending',createdAt:Date.now(),installToken:rand(),agentToken:null,vless:null,lastHeartbeat:null};await put(`server:${s.id}`,s);await put(`install:${s.installToken}`,{serverId:s.id});return Response.redirect(`${u.origin}/`+(u.search||''),303)}
+async function install(req,token){const s=await installInfo(token);return s?json({id:s.id,name:s.name,host:s.host,port:s.port,sni:s.sni,status:s.status,createdAt:s.createdAt}):json({error:'invalid install token'},401)}
+async function script(req,token){const s=await installInfo(token);if(!s)return new Response('invalid install token',{status:401});const w=new URL(req.url).origin;return new Response(`#!/bin/bash\nset -u\nWORKER=${JSON.stringify(w)}\nTOKEN=${JSON.stringify(token)}\n${AGENT_SCRIPT}\n`,{headers:{'content-type':'text/plain;charset=utf-8'}})}
+async function register(req){let b;try{b=await req.json()}catch{return json({error:'invalid json'},400)}if(!b.installToken)return json({error:'missing installToken'},400);const m=await get(`install:${b.installToken}`);if(!m)return json({error:'invalid installToken'},401);const s=await get(`server:${m.serverId}`);if(!s)return json({error:'server not found'},404);for(const k of ['uuid','publicKey','shortId','host','port'])if(!b[k])return json({error:`missing ${k}`},400);const at=rand();s.host=b.host;s.port=Number(b.port);s.uuid=b.uuid;s.publicKey=b.publicKey;s.shortId=b.shortId;s.agentToken=at;s.status='online';s.lastHeartbeat=Date.now();s.vless=`vless://${b.uuid}@${b.host}:${s.port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${encodeURIComponent(s.sni)}&fp=chrome&pbk=${encodeURIComponent(b.publicKey)}&sid=${b.shortId}&type=tcp#${encodeURIComponent(s.name)}`;await put(`server:${s.id}`,s);await put(`agent:${at}`,{serverId:s.id});return json({serverId:s.id,agentToken:at,vless:s.vless})}
+async function heartbeat(req){const x=await agentServer(req);if(!x)return json({error:'unauthorized'},401);let b={};try{b=await req.json()}catch{}x.s.status='online';x.s.lastHeartbeat=Date.now();if(b.ip)x.s.host=b.ip;if(b.xray)x.s.xray=b.xray;await put(`server:${x.s.id}`,x.s);return json({ok:true})}
+async function poll(req){const x=await agentServer(req);if(!x)return json({error:'unauthorized'},401);if(x.s.pendingCommand){const c=x.s.pendingCommand;x.s.pendingCommand=null;await put(`server:${x.s.id}`,x.s);return json(c)}return json({command:'none'})}
+
+const AGENT_SCRIPT=String.raw`
+CONFIG=/etc/vless-agent/config
+mkdir -p /etc/vless-agent /etc/xray
+printf 'WORKER=%q\nTOKEN=%q\n' "$WORKER" "$TOKEN" > "$CONFIG"
+chmod 600 "$CONFIG"
+. "$CONFIG"
+log(){ echo "[vless-agent] $*"; }
+fail(){ log "ERROR: $*"; exit 1; }
+install_xray(){
+  [ -x /usr/local/bin/xray ] && return 0
+  curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh | bash -s install --version latest || fail "Xray installation failed"
+}
+setup_xray_service(){
+cat >/etc/systemd/system/xray.service <<'UNIT'
 [Unit]
-After=network-online.target
+Description=Xray Service
+After=network.target nss-lookup.target
+Wants=network.target
 [Service]
-ExecStart=/etc/vless-agent/agent.sh
-Restart=always
+Type=simple
+User=root
+ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+}
+install_xray
+setup_xray_service
+I=$(curl -fsS --max-time 15 "$WORKER/api/install/$TOKEN") || fail "Worker install API failed"
+SNI=$(printf '%s' "$I"|sed -n 's/.*"sni":"\([^"]*\)".*/\1/p')
+PORT=$(printf '%s' "$I"|sed -n 's/.*"port":\([0-9]*\).*/\1/p')
+[ -n "$SNI" ]||SNI=www.microsoft.com
+[ -n "$PORT" ]||PORT=26443
+UUID=$(/usr/local/bin/xray uuid)||fail "UUID generation failed"
+K=$(/usr/local/bin/xray x25519)||fail "x25519 failed"
+PRIV=$(printf '%s\n' "$K"|awk -F': ' '/^PrivateKey:/{print $2}')
+PUB=$(printf '%s\n' "$K"|awk -F': ' '/PublicKey\):/{print $2}')
+SID=$(openssl rand -hex 4)||fail "shortId generation failed"
+[ -n "$PRIV" ]||fail "Reality privateKey empty"
+[ -n "$PUB" ]||fail "Reality publicKey empty"
+cat >/etc/xray/config.json <<EOF
+{
+  "log":{"loglevel":"warning"},
+  "inbounds":[{"listen":"0.0.0.0","port":$PORT,"protocol":"vless","settings":{"clients":[{"id":"$UUID","flow":"xtls-rprx-vision"}],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"show":false,"dest":"$SNI:443","xver":0,"serverNames":["$SNI"],"privateKey":"$PRIV","shortIds":["$SID"]}}}],
+  "outbounds":[{"protocol":"freedom"}]
+}
 EOF
-systemctl daemon-reload; systemctl enable --now vless-agent
-`}
-function agentScript(){return `#!/bin/bash
+/usr/local/bin/xray run -test -config /etc/xray/config.json||fail "Xray config test failed"
+systemctl enable xray >/dev/null 2>&1||true
+systemctl restart xray
+sleep 1
+systemctl is-active --quiet xray||{ systemctl status xray --no-pager -l;fail "Xray failed to start"; }
+IP=$(curl -4 -fsS --max-time 8 https://api.ipify.org 2>/dev/null||true)
+[ -n "$IP" ]||IP=$(curl -6 -fsS --max-time 8 https://api64.ipify.org 2>/dev/null||true)
+[ -n "$IP" ]||fail "public IP detection failed"
+R=$(curl -fsS --max-time 15 -X POST "$WORKER/api/agent/register" -H 'content-type: application/json' --data "{\"installToken\":\"$TOKEN\",\"uuid\":\"$UUID\",\"publicKey\":\"$PUB\",\"shortId\":\"$SID\",\"host\":\"$IP\",\"port\":$PORT}")||fail "register failed"
+AG=$(printf '%s' "$R"|sed -n 's/.*"agentToken":"\([^"]*\)".*/\1/p')
+VLESS=$(printf '%s' "$R"|sed -n 's/.*"vless":"\([^"]*\)".*/\1/p')
+[ -n "$AG" ]||{ echo "$R";fail "no agentToken returned"; }
+printf '%s\n' "$R">/etc/vless-agent/register.json
+printf 'AGENT_TOKEN=%q\n' "$AG">>/etc/vless-agent/config
+chmod 600 /etc/vless-agent/config
+cat >/etc/systemd/system/vless-agent.service <<'UNIT'
+[Unit]
+Description=VLESS Node Agent
+After=network-online.target xray.service
+Wants=network-online.target
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/vless-agent
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+UNIT
+cat >/usr/local/bin/vless-agent <<'AGENT'
+#!/bin/bash
 set -u
 . /etc/vless-agent/config
-install_x(){ command -v xray >/dev/null || curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh | bash -s install --version latest; }
-ip(){ curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null || curl -6 -fsS --max-time 5 https://api64.ipify.org 2>/dev/null || echo ''; }
-install_x
-I=$(curl -fsS "$WORKER/api/install/$TOKEN")
-SNI=$(echo "$I"|sed -n 's/.*"sni":"\([^"]*\)".*/\\1/p'); PORT=$(echo "$I"|sed -n 's/.*"port":\([0-9]*\).*/\\1/p'); [ -n "$SNI" ]||SNI=www.microsoft.com; [ -n "$PORT" ]||PORT=443
-UUID=$(xray uuid); K=$(xray x25519); PRIV=$(echo "$K"|awk '/Private key/{print $3}'); PUB=$(echo "$K"|awk '/Public key/{print $3}'); SID=$(openssl rand -hex 4)
-mkdir -p /etc/xray
-cat >/etc/xray/config.json <<EOF
-{"log":{"loglevel":"warning"},"inbounds":[{"listen":"0.0.0.0","port":$PORT,"protocol":"vless","settings":{"clients":[{"id":"$UUID","flow":"xtls-rprx-vision"}],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"show":false,"dest":"$SNI:443","xver":0,"serverNames":["$SNI"],"privateKey":"$PRIV","shortIds":["$SID"]}}}],"outbounds":[{"protocol":"freedom"}]}
-EOF
-systemctl enable --now xray || systemctl restart xray
-IP=$(ip -4 route get 1.1.1.1 2>/dev/null|awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}'); [ -n "$IP" ]||IP=$(ip -6 route get 2606:4700:4700::1111 2>/dev/null|awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}')
-R=$(curl -fsS -X POST "$WORKER/api/agent/register" -H 'content-type: application/json' -d "{\"installToken\":\"$TOKEN\",\"uuid\":\"$UUID\",\"publicKey\":\"$PUB\",\"shortId\":\"$SID\",\"host\":\"$IP\",\"port\":$PORT}")
-AG=$(echo "$R"|sed -n 's/.*"agentToken":"\([^"]*\)".*/\\1/p'); echo "$R" >/etc/vless-agent/register.json
-while true; do curl -fsS -X POST "$WORKER/api/agent/heartbeat" -H "Authorization: Bearer $AG" -H 'content-type: application/json' -d "{\"xray\":\"$(systemctl is-active xray 2>/dev/null)\",\"ip\":\"$IP\"}" >/dev/null || true; C=$(curl -fsS --max-time 60 "$WORKER/api/agent/poll" -H "Authorization: Bearer $AG" 2>/dev/null||echo '{}'); echo "$C"|grep -q restart_xray && systemctl restart xray; sleep 2; done
-`}
-export default{async fetch(r,e){let u=new URL(r.url),p=u.pathname;
-if(p==='/'||p==='/index.html')return new Response(PAGE,{headers:{'content-type':'text/html;charset=utf-8'}});
-if(p==='/api/login'&&r.method==='POST'){let b=await r.json();return b.password===e.ADMIN_PASSWORD?j({ok:true,token:e.ADMIN_PASSWORD}):j({error:'Unauthorized'},401)}
-if(p==='/api/servers'&&r.method==='GET'){if(!ok(r,e))return j({error:'Unauthorized'},401);let z=[],c;do{let x=await e.DATA.list({prefix:'server:',cursor:c,limit:1000});for(let k of x.keys){let s=await e.DATA.get(k.name,'json');if(s)z.push(s)}c=x.list_complete?undefined:x.cursor}while(c);return j(z)}
-if(p==='/api/servers'&&r.method==='POST'){if(!ok(r,e))return j({error:'Unauthorized'},401);let b=await r.json(),id='srv_'+crypto.randomUUID().replaceAll('-','').slice(0,16),t=crypto.randomUUID().replaceAll('-','')+crypto.randomUUID().replaceAll('-',''),s={id,name:b.name,host:'',port:+b.port||443,sni:b.sni||'www.microsoft.com',status:'pending',createdAt:Date.now()};await e.DATA.put(sk(id),JSON.stringify(s));await e.DATA.put(ik(t),JSON.stringify({serverId:id}),{expirationTtl:3600});return j({server:s,command:`curl -fsSL ${u.origin}/install/${t} | sudo bash`})}
-if(p.startsWith('/api/servers/')&&p.endsWith('/command')&&r.method==='POST'){if(!ok(r,e))return j({error:'Unauthorized'},401);let id=p.split('/')[3],q=await e.DATA.get(qk(id),'json')||[];q.push({id:crypto.randomUUID(),...(await r.json()),createdAt:Date.now()});await e.DATA.put(qk(id),JSON.stringify(q),{expirationTtl:3600});return j({ok:true})}
-if(p.startsWith('/api/servers/')&&r.method==='GET'){if(!ok(r,e))return j({error:'Unauthorized'},401);let s=await e.DATA.get(sk(p.split('/')[3]),'json');return s?j({server:s,state:{online:s.status==='online'&&Date.now()-s.lastSeen<90000}}):j({error:'Not found'},404)}
-if(p.startsWith('/install/')){let t=p.split('/')[2];if(!await e.DATA.get(ik(t)))return new Response('Invalid token',{status:404});return new Response(installScript(u.origin,t),{headers:{'content-type':'text/plain'}})}
-if(p==='/agent.sh'){let t=u.searchParams.get('token')||'';if(!await e.DATA.get(ik(t)))return new Response('Invalid token',{status:404});return new Response(agentScript(),{headers:{'content-type':'text/plain'}})}
-if(p==='/api/install/'+p.split('/')[3]){let t=p.split('/')[3],r0=await e.DATA.get(ik(t),'json');if(!r0)return j({error:'Invalid token'},404);let s=await e.DATA.get(sk(r0.serverId),'json');return j(s||{})}
-if(p==='/api/agent/register'&&r.method==='POST'){let b=await r.json(),rr=await e.DATA.get(ik(b.installToken),'json');if(!rr)return j({error:'Invalid token'},401);let s=await e.DATA.get(sk(rr.serverId),'json');if(!s)return j({error:'Not found'},404);let at=crypto.randomUUID().replaceAll('-','')+crypto.randomUUID().replaceAll('-','');Object.assign(s,{uuid:b.uuid,publicKey:b.publicKey,shortId:b.shortId,host:b.host||s.host,port:b.port||s.port,status:'online',lastSeen:Date.now(),agentTokenHash:await hash(at)});await e.DATA.put(sk(s.id),JSON.stringify(s));await e.DATA.delete(ik(b.installToken));return j({serverId:s.id,agentToken:at,vless:link(s)})}
-if(p==='/api/agent/heartbeat'&&r.method==='POST'){let at=(r.headers.get('Authorization')||'').replace(/^Bearer\s+/i,''),a=[],c;do{let x=await e.DATA.list({prefix:'server:',cursor:c,limit:1000});a.push(...x.keys);c=x.list_complete?undefined:x.cursor}while(c);for(let k of a){let s=await e.DATA.get(k.name,'json');if(s&&s.agentTokenHash===await hash(at)){s.lastSeen=Date.now();s.status='online';s.agentInfo=await r.json();await e.DATA.put(k.name,JSON.stringify(s));return j({ok:true})}}return j({error:'Unauthorized'},401)}
-if(p==='/api/agent/poll'){let at=(r.headers.get('Authorization')||'').replace(/^Bearer\s+/i,''),a=await e.DATA.list({prefix:'server:',limit:1000});for(let k of a.keys){let s=await e.DATA.get(k.name,'json');if(s&&s.agentTokenHash===await hash(at)){let q=await e.DATA.get(qk(s.id),'json')||[];if(q.length){let c=q.shift();await e.DATA.put(qk(s.id),JSON.stringify(q),{expirationTtl:3600});return j({command:c})}return j({command:null})}}return j({error:'Unauthorized'},401)}
-return new Response('Not Found',{status:404})}};
+AGENT_TOKEN=\${AGENT_TOKEN:-}
+[ -n "$AGENT_TOKEN" ] || exit 1
+while true; do
+  IP=$(curl -4 -fsS --max-time 8 https://api.ipify.org 2>/dev/null || true)
+  curl -fsS --max-time 15 -X POST "$WORKER/api/agent/heartbeat" -H "Authorization: Bearer $AGENT_TOKEN" -H 'content-type: application/json' --data "{\"xray\":\"$(systemctl is-active xray 2>/dev/null || true)\",\"ip\":\"$IP\"}" >/dev/null 2>&1 || true
+  C=$(curl -fsS --max-time 65 "$WORKER/api/agent/poll" -H "Authorization: Bearer $AGENT_TOKEN" 2>/dev/null || true)
+  if printf '%s' "$C" | grep -q '"command":"restart_xray"'; then systemctl restart xray; fi
+  sleep 5
+done
+AGENT
+chmod 700 /usr/local/bin/vless-agent
+systemctl daemon-reload
+systemctl enable --now vless-agent
+echo "VLESS: $VLESS"
+`;
+
+export default {async fetch(req,env){globalThis.DATA=env.DATA;globalThis.env=env;try{const u=new URL(req.url),p=u.pathname;if(p==='/'&&req.method==='GET')return home(req);if(p==='/api/server/create'&&req.method==='POST')return create(req);if(p.startsWith('/api/install/')&&req.method==='GET')return install(req,p.split('/').pop());if(p.startsWith('/api/install-script/')&&req.method==='GET')return script(req,p.split('/').pop());if(p==='/api/agent/register'&&req.method==='POST')return register(req);if(p==='/api/agent/heartbeat'&&req.method==='POST')return heartbeat(req);if(p==='/api/agent/poll'&&req.method==='GET')return poll(req);if(p==='/api/health')return json({ok:true,time:Date.now()});return new Response('Not found',{status:404})}catch(e){return json({error:String(e?.stack||e)},500)}}};
